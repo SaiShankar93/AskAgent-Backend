@@ -1,0 +1,64 @@
+{
+  "name": "server",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "dev": "nodemon index.js",
+    "start": "node index.js",
+    "test": "jest",
+    "test:watch": "jest --watch"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.71.0",
+    "@clerk/clerk-sdk-node": "^4.13.23",
+    "@google/genai": "^1.30.0",
+    "@google/generative-ai": "^0.24.1",
+    "@langchain/community": "^1.0.0",
+    "@langchain/core": "^1.0.2",
+    "@langchain/openai": "^1.0.0",
+    "@langchain/textsplitters": "^1.0.0",
+    "@mendable/firecrawl-js": "^4.5.0",
+    "@mistralai/mistralai": "^1.10.0",
+    "@qdrant/js-client-rest": "^1.16.1",
+    "@supabase/supabase-js": "^2.86.0",
+    "axios": "^1.10.0",
+    "better-sqlite3": "^12.4.6",
+    "body-parser": "^2.2.0",
+    "cheerio": "^1.1.0",
+    "cheerio-select": "^2.1.0",
+    "cloudflare": "^5.2.0",
+    "cohere-ai": "^7.20.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0",
+    "groq-sdk": "^0.37.0",
+    "langchain": "^1.0.2",
+    "mammoth": "^1.11.0",
+    "mem0ai": "^2.1.38",
+    "mongodb": "^6.20.0",
+    "mongoose": "^8.19.3",
+    "multer": "^2.0.2",
+    "neo4j-driver": "^6.0.1",
+    "nodemon": "^3.1.10",
+    "ollama": "^0.6.3",
+    "openai": "^4.104.0",
+    "pdf-parse": "^2.4.5",
+    "puppeteer": "^24.27.0",
+    "redis": "^5.10.0",
+    "sqlite3": "^5.1.7"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testTimeout": 30000,
+    "setupFilesAfterEnv": [
+      "<rootDir>/jest.setup.js"
+    ]
+  }
+}
