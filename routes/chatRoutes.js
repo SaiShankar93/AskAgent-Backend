@@ -6,8 +6,14 @@ const chatController = require('../controllers/chatController');
 // Get chat history for an agent
 router.get('/:agentId/history', requireAuth, chatController.getHistory);
 
-// Send a message with RAG response
+// Send a message with RAG response (now uses queue)
 router.post('/send', requireAuth, chatController.sendMessage);
+
+// Get status of a queued message
+router.get('/status/:messageId', requireAuth, chatController.getMessageStatus);
+
+// Get queue statistics
+router.get('/queue/stats', requireAuth, chatController.getQueueStats);
 
 // Widget endpoint (no auth required for public embedding)
 router.post('/widget', chatController.widgetMessage);
