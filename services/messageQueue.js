@@ -24,7 +24,7 @@ class MessageQueueService {
             this.initialize();
         }
 
-        const messageId = `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        const messageId = `msg_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
         const message = {
             id: messageId,
             data: messageData,
@@ -57,6 +57,11 @@ class MessageQueueService {
         }
 
         const message = JSON.parse(messageStr);
+        
+        // Store message in hash for O(1) lookup
+        const messageKey = `processing:${message.id}`;
+        await this.redisClient.setEx(messageKey, 3600, messageStr); // 1 hour TTL
+        
         console.log(`[Queue] Message ${message.id} dequeued for processing`);
         return message;
     }
@@ -71,7 +76,7 @@ class MessageQueueService {
             this.initialize();
         }
 
-        // Remove from processing queue
+        // Remove from processing queue and hash
         await this.removeFromProcessing(messageId);
         
         // Store the result with expiration (1 hour)
@@ -171,13 +176,12 @@ class MessageQueueService {
      * @private
      */
     async findInProcessing(messageId) {
-        const processingMessages = await this.redisClient.lRange(PROCESSING_QUEUE, 0, -1);
+        // Use hash for O(1) lookup
+        const messageKey = `processing:${messageId}`;
+        const msgStr = await this.redisClient.get(messageKey);
         
-        for (const msgStr of processingMessages) {
-            const msg = JSON.parse(msgStr);
-            if (msg.id === messageId) {
-                return msg;
-            }
+        if (msgStr) {
+            return JSON.parse(msgStr);
         }
         
         return null;
@@ -188,14 +192,16 @@ class MessageQueueService {
      * @private
      */
     async removeFromProcessing(messageId) {
-        const processingMessages = await this.redisClient.lRange(PROCESSING_QUEUE, 0, -1);
+        // Use hash for O(1) lookup
+        const messageKey = `processing:${messageId}`;
+        const msgStr = await this.redisClient.get(messageKey);
         
-        for (const msgStr of processingMessages) {
-            const msg = JSON.parse(msgStr);
-            if (msg.id === messageId) {
-                await this.redisClient.lRem(PROCESSING_QUEUE, 1, msgStr);
-                break;
-            }
+        if (msgStr) {
+            // Remove from both the list and hash
+            await Promise.all([
+                this.redisClient.lRem(PROCESSING_QUEUE, 1, msgStr),
+                this.redisClient.del(messageKey)
+            ]);
         }
     }
 
@@ -207,11 +213,18 @@ class MessageQueueService {
             this.initialize();
         }
 
+        // Delete queue lists
         await Promise.all([
             this.redisClient.del(QUEUE_NAME),
             this.redisClient.del(PROCESSING_QUEUE),
             this.redisClient.del(FAILED_QUEUE),
         ]);
+
+        // Clear all processing hash keys
+        const keys = await this.redisClient.keys('processing:*');
+        if (keys.length > 0) {
+            await this.redisClient.del(keys);
+        }
 
         console.log('[Queue] All queues cleared');
     }
