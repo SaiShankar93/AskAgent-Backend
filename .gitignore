@@ -11,3 +11,5 @@ yarn-error.log*
 .idea/
 memory.db
 vector_store.db
+test-queue.js
+test-integration.js
