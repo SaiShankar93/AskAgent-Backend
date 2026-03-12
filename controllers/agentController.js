@@ -87,7 +87,7 @@ async function createAgentFromWebsite(req, res) {
                 if (scrapedPages.length === 0) {
                     throw new Error('No content could be extracted from the website');
                 }
-
+                console.log("scrapedPages",scrapedPages);   
                 const textChunker = new TextChunker(1200, 200);
                 let allChunks = [];
                 for (const page of scrapedPages) {
@@ -102,7 +102,7 @@ async function createAgentFromWebsite(req, res) {
                 }
 
                 console.log(`[Agent Creation] Created ${allChunks.length} chunks from ${scrapedPages.length} pages`);
-
+                console.log("allChunks",allChunks);
                 const firstPage = scrapedPages[0];
                 const logoUrl = firstPage.favicon || null;
                 const pageTitle = firstPage.title || name;
@@ -110,6 +110,7 @@ async function createAgentFromWebsite(req, res) {
 
                 console.log(`[Agent Creation] Generating embeddings for ${allChunks.length} chunks`);
                 const embeddedChunks = await embeddingService.generateChunkEmbeddings(allChunks);
+                console.log("embd",embeddedChunks);
                 console.log(`[Agent Creation] Generated ${embeddedChunks.length} embeddings`);
 
                 const agent = await Agent.create({
@@ -143,6 +144,12 @@ async function createAgentFromWebsite(req, res) {
                     description: pageDescription,
                     sourceUrl: url
                 }).catch(err => console.error('[Agent Creation] Failed to store memory identity:', err));
+
+                // Store page-level summaries so identity/ownership questions have rich context
+                await memoryService.storePageSummaries(agent.id, {
+                    name: agent.name,
+                    sourceUrl: url
+                }, scrapedPages).catch(err => console.error('[Agent Creation] Failed to store page summaries:', err));
 
                 await Agent.update(agent.id, {
                     vector_store_id: `agent_${agent.id}`,

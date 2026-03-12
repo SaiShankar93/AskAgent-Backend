@@ -86,16 +86,19 @@ async function sendMessage(req, res) {
             return res.json({ success: true, data: { userMessage, assistantMessage, metadata: { noEmbeddings: true, message: 'Agent has no knowledge base yet' } } });
         }
 
-        const retrievedData = await ragService.retrieveContext(agentId, content, { topK: 5, threshold: 0.5, includeConversationHistory: true });
+        const retrievedData = await ragService.retrieveContext(agentId, content, { topK: 5, threshold: 0.5, includeConversationHistory: true, agentContext: { name: agent.name, type: agent.type, description: agent.description, sourceUrl: agent.source_url } });
 
         console.log(`[Chat] Retrieved ${retrievedData.chunks.length} relevant chunks`);
         console.log(`[Chat] Average similarity: ${retrievedData.metadata.averageSimilarity.toFixed(3)}`);
         
         // For generic requests (summarize, outline), lower the bar for context relevance
         const isGenericRequest = retrievedData.isGenericRequest;
-        const hasRelevantContext = isGenericRequest 
-            ? retrievedData.chunks.length > 0 
-            : (retrievedData.chunks.length > 0 && retrievedData.metadata.averageSimilarity > 0.3);
+        const isIdentityQuestion = retrievedData.isIdentityQuestion;
+        const hasRelevantContext = isIdentityQuestion
+            ? true
+            : isGenericRequest
+                ? retrievedData.chunks.length > 0
+                : (retrievedData.chunks.length > 0 && retrievedData.metadata.averageSimilarity > 0.3);
         
         // Build agent context information
         const agentContext = {
@@ -173,7 +176,7 @@ Be thorough but concise. Organize your response clearly.`;
                 console.log(`[Chat] Generic request detected - using retrieved chunks for comprehensive response`);
             }
             
-            const prompt = ragService.buildPrompt(content, retrievedData.context, retrievedData.conversationHistory, agentContext, hasRelevantContext, isGenericRequest);
+            const prompt = ragService.buildPrompt(content, retrievedData.context, retrievedData.conversationHistory, agentContext, hasRelevantContext, isGenericRequest, isIdentityQuestion);
             llmResponse = await llmService.generateResponse(prompt);
         }
 
@@ -281,12 +284,15 @@ async function widgetMessage(req, res) {
             });
         }
 
-        const retrievedData = await ragService.retrieveContext(agentId, content, { topK: 5, threshold: 0.5, includeConversationHistory: false });
+        const retrievedData = await ragService.retrieveContext(agentId, content, { topK: 5, threshold: 0.5, includeConversationHistory: false, agentContext: { name: agent.name, type: agent.type, description: agent.description, sourceUrl: agent.source_url } });
 
         const isGenericRequest = retrievedData.isGenericRequest;
-        const hasRelevantContext = isGenericRequest 
-            ? retrievedData.chunks.length > 0 
-            : (retrievedData.chunks.length > 0 && retrievedData.metadata.averageSimilarity > 0.3);
+        const isIdentityQuestion = retrievedData.isIdentityQuestion;
+        const hasRelevantContext = isIdentityQuestion
+            ? true
+            : isGenericRequest
+                ? retrievedData.chunks.length > 0
+                : (retrievedData.chunks.length > 0 && retrievedData.metadata.averageSimilarity > 0.3);
 
         const agentContext = {
             name: agent.name,
@@ -331,7 +337,7 @@ async function widgetMessage(req, res) {
             const systemPrompt = `You are an AI assistant for "${agent.name}". Be helpful and concise.`;
             llmResponse = await llmService.generateWithTools(systemPrompt, content, tools, toolExecutor);
         } else {
-            const prompt = ragService.buildPrompt(content, retrievedData.context, [], agentContext, hasRelevantContext, isGenericRequest);
+            const prompt = ragService.buildPrompt(content, retrievedData.context, [], agentContext, hasRelevantContext, isGenericRequest, isIdentityQuestion);
             llmResponse = await llmService.generateResponse(prompt);
         }
 

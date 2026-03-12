@@ -284,7 +284,7 @@ class VectorStore {
       const hasCollection = collections.collections.some(c => c.name === COLLECTION_NAME);
       if (!hasCollection) {
         await qdrant.createCollection(COLLECTION_NAME, {
-          vectors: { size: 768, distance: 'Cosine' },
+          vectors: { size: 1536, distance: 'Cosine' },
         });
       }
       const countRes = await qdrant.count(COLLECTION_NAME, {});

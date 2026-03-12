@@ -243,6 +243,53 @@ const getAllMemories = async (agentId) => {
 };
 
 /**
+ * Store page-level summaries (titles, descriptions, headings) in memory
+ * Called when a website agent is created, so identity/content questions have rich context
+ *
+ * @param {string} agentId
+ * @param {Object} agentInfo - { name, sourceUrl }
+ * @param {Array}  pages    - scraped page objects from WebsiteCrawler
+ */
+const storePageSummaries = async (agentId, agentInfo, pages) => {
+    try {
+        const memory = await initializeMemory();
+        const { name, sourceUrl } = agentInfo;
+
+        const messages = [
+            {
+                role: 'system',
+                content: `I am the AI assistant for "${name}" (${sourceUrl || 'unknown source'}). Here is a structured summary of every page I know about:`
+            }
+        ];
+
+        for (const page of pages.slice(0, 30)) {
+            const parts = [];
+            if (page.title)       parts.push(`Title: ${page.title}`);
+            if (page.url)         parts.push(`URL: ${page.url}`);
+            if (page.description) parts.push(`Description: ${page.description}`);
+            if (page.headings && page.headings.length > 0)
+                parts.push(`Headings: ${page.headings.slice(0, 8).join(', ')}`);
+            if (page.wordCount)   parts.push(`Words: ${page.wordCount}`);
+
+            if (parts.length > 0) {
+                messages.push({ role: 'system', content: parts.join(' | ') });
+            }
+        }
+
+        await memory.add(messages, {
+            agentId,
+            metadata: { type: 'page_summaries', agentName: name, sourceUrl: sourceUrl || null }
+        });
+
+        console.log(`✅ Stored page summaries for agent: ${name} (${pages.length} pages)`);
+        return true;
+    } catch (error) {
+        console.error('❌ Failed to store page summaries:', error);
+        return false;
+    }
+};
+
+/**
  * Clear all memories for an agent
  * Useful when an agent is deleted or reset
  * 
@@ -292,7 +339,16 @@ const buildMemoryContext = async (agentId, query, sessionId) => {
             /what do you know/i,
             /introduce yourself/i,
             /what is your purpose/i,
-            /why were you created/i
+            /why were you created/i,
+            // ownership / person questions
+            /whose (website|site|page|blog|portfolio|project)/i,
+            /who (is|are) (this|the) (person|owner|author|creator|developer)/i,
+            /who (made|created|built|owns|runs|developed) (this|the)/i,
+            /who is [a-z]/i,
+            /tell me (more )?about (him|her|the (author|owner|creator|developer|person))/i,
+            /what (do you know about|can you tell me about) (this|the|him|her)/i,
+            /fetch (his|her|their)/i,
+            /\b(his|her|their) (blogs?|projects?|work|skills?|experience|education|contact|portfolio)\b/i,
         ];
 
         const isIdentityQuestion = identityPatterns.some(pattern => pattern.test(query));
@@ -353,6 +409,7 @@ const hasStoredIdentity = async (agentId) => {
 module.exports = {
     initializeMemory,
     storeAgentIdentity,
+    storePageSummaries,
     addConversationMemory,
     searchMemories,
     getAgentIdentity,

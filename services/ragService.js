@@ -14,30 +14,86 @@ class RAGService {
    * @param {string} query - User query
    * @returns {string} Expanded query for better vector search
    */
+  /**
+   * Contextualize a vague/pronoun-based query with the agent name
+   * e.g. "his blogs" + agent "Sai Shankar" → "Sai Shankar blogs"
+   */
+  contextualizeQuery(query, agentName) {
+    if (!agentName) return query;
+    const lowerQuery = query.toLowerCase().trim();
+
+    // Pronoun / vague reference patterns that need grounding
+    const pronounPatterns = [
+      /\b(his|her|their|its|this person'?s?)\b/i,
+      /\b(he|she|they)\b/i,
+      /^(whose|who is|who are|who's)/i,
+      /\b(the (owner|author|creator|developer|person|guy|individual))\b/i,
+    ];
+
+    const hasPronouns = pronounPatterns.some(p => p.test(lowerQuery));
+    if (hasPronouns) {
+      // Replace pronouns with agent name for a grounded query
+      let grounded = query
+        .replace(/\b(his|her|their|its)\b/gi, `${agentName}'s`)
+        .replace(/\b(he|she|they)\b/gi, agentName)
+        .replace(/^(whose)/i, `who is`);
+      // Append agent name as extra context for the embedding
+      return `${grounded} ${agentName}`;
+    }
+
+    return query;
+  }
+
   expandQuery(query) {
     const lowerQuery = query.toLowerCase().trim();
-    
-    // Patterns for summary/outline requests
+
+    // No ^ anchors — match anywhere in the query string
     const summaryPatterns = [
-      /^(summarize|summary|summarise|sum up|give me a summary)/i,
-      /^(outline|give me an outline|show me an outline)/i,
-      /^(overview|give me an overview|show me an overview)/i,
-      /^(explain|explain this|explain it|what is this|what's this)/i,
-      /^(describe|describe this|describe it)/i,
-      /^(tell me about|what about|info about)/i,
+      /\b(summarize|summarise|summary)\b/i,
+      /\bsum up\b/i,
+      /\bgive (me )?(a |an )?(summary|overview|outline)\b/i,
+      /\b(outline|overview)\b/i,
+      /\b(explain|describe)\b/i,
+      /\bwhat is (this|the )?(website|site|page|content|document|project|blog|portfolio)?\b/i,
+      /\bwhat'?s (this|the )?(website|site|page|content|document|project|blog|portfolio)?\b/i,
+      /\btell me about (this|the )?(website|site|page|content|document|project|blog|portfolio)\b/i,
+      /\bcan you (summarize|summarise|overview|explain|describe|outline)\b/i,
+      /\bplease (summarize|summarise|overview|explain|describe|outline)\b/i,
+      /\b(info|information) about (this|the )?(website|site|page|content|document)\b/i,
     ];
-    
-    // Check if it's a generic request
+
     const isGenericRequest = summaryPatterns.some(pattern => pattern.test(lowerQuery));
-    
+
     if (isGenericRequest) {
-      // For generic requests, search broadly by returning common content words
-      // This will help retrieve the most central/important chunks
-      return query + " introduction overview main key important content information description explanation example definition purpose";
+      return query + ' introduction overview main key important content information description explanation example definition purpose';
     }
-    
-    // For specific questions, return as-is
+
     return query;
+  }
+
+  detectIdentityQuestion(query, agentName = '') {
+    const lowerQuery = query.toLowerCase().trim();
+
+    const patterns = [
+      /\bwhose (website|site|page|blog|portfolio|project)\b/i,
+      /\bwho (is|are) (this|the) (person|owner|author|creator|developer|individual)\b/i,
+      /\bwho (made|created|built|owns|runs|developed) (this|the)?\s*(website|site|page|blog|project)?\b/i,
+      /\btell me (more )?about (him|her|the (author|owner|creator|developer|person))\b/i,
+      /\bwho (is|are) (behind|responsible for) (this|the)\b/i,
+      /\b(about|info about|information about) (the )?(owner|author|creator|developer|person)\b/i,
+      /\bfetch (his|her|their)\b/i,
+      /\b(his|her|their) (blogs?|projects?|work|skills?|experience|education|contact|portfolio)\b/i,
+    ];
+
+    if (patterns.some(p => p.test(lowerQuery))) return true;
+
+    // "who is [agent name]" — check if query contains the agent name alongside "who is"
+    if (agentName && /\bwho (is|are)\b/i.test(lowerQuery)) {
+      const nameParts = agentName.toLowerCase().split(/\s+/).filter(p => p.length > 2);
+      if (nameParts.some(part => lowerQuery.includes(part))) return true;
+    }
+
+    return false;
   }
 
   /**
@@ -53,16 +109,28 @@ class RAGService {
         topK = this.defaultTopK,
         threshold = this.defaultThreshold,
         includeConversationHistory = true,
+        agentContext = {},
       } = options;
 
       console.log(`[RAG] Retrieving context for query: "${userQuery.substring(0, 50)}..."`);
 
+      // Step 0: Contextualize pronoun/vague queries with the agent name
+      const agentName = agentContext.name || '';
+      const contextualizedQuery = this.contextualizeQuery(userQuery, agentName);
+      if (contextualizedQuery !== userQuery) {
+        console.log(`[RAG] Contextualized query: "${contextualizedQuery.substring(0, 80)}"`);
+      }
+
       // Expand query for better vector search (especially for generic requests)
-      const expandedQuery = this.expandQuery(userQuery);
-      const isGenericRequest = expandedQuery !== userQuery;
-      
+      const expandedQuery = this.expandQuery(contextualizedQuery);
+      const isGenericRequest = expandedQuery !== contextualizedQuery;
+      const isIdentityQuestion = this.detectIdentityQuestion(userQuery, agentName);
+
       if (isGenericRequest) {
         console.log(`[RAG] Detected generic request, expanding query for better retrieval`);
+      }
+      if (isIdentityQuestion) {
+        console.log(`[RAG] Detected identity/ownership question`);
       }
 
       // Step 1: Generate embedding for the expanded query
@@ -74,12 +142,19 @@ class RAGService {
       const searchTopK = isGenericRequest ? topK * 2 : topK;
       const searchThreshold = isGenericRequest ? 0.3 : threshold;
       
-      const similarChunks = await vectorStore.searchSimilar(
+      let similarChunks = await vectorStore.searchSimilar(
         agentId,
         queryEmbedding,
         searchTopK,
         searchThreshold
       );
+
+      // Fallback: if nothing found, retry with a very low threshold to always surface something
+      if (similarChunks.length === 0) {
+        console.log(`[RAG] No chunks at threshold ${searchThreshold}, retrying with fallback threshold 0.2`);
+        similarChunks = await vectorStore.searchSimilar(agentId, queryEmbedding, topK, 0.2);
+        console.log(`[RAG] Fallback retrieval found ${similarChunks.length} chunks`);
+      }
 
       console.log(`[RAG] Found ${similarChunks.length} relevant chunks`);
 
@@ -96,7 +171,8 @@ class RAGService {
         context,
         chunks: similarChunks,
         conversationHistory,
-        isGenericRequest, // Flag for prompt building
+        isGenericRequest,
+        isIdentityQuestion,
         metadata: {
           chunksRetrieved: similarChunks.length,
           averageSimilarity: this.calculateAverageSimilarity(similarChunks),
@@ -184,7 +260,7 @@ class RAGService {
    * @param {boolean} isGenericRequest - Whether this is a summary/outline request
    * @returns {string} Complete prompt
    */
-  buildPrompt(userQuery, context, conversationHistory = [], agentContext = {}, hasRelevantContext = true, isGenericRequest = false) {
+  buildPrompt(userQuery, context, conversationHistory = [], agentContext = {}, hasRelevantContext = true, isGenericRequest = false, isIdentityQuestion = false) {
     const agentName = agentContext.name || 'Assistant';
     const agentType = agentContext.type || 'knowledge base';
     const sourceUrl = agentContext.sourceUrl || '';
@@ -220,8 +296,21 @@ class RAGService {
       prompt += `\n`;
     }
 
+    // Handle identity/ownership questions — use memory context + any retrieved chunks
+    if (isIdentityQuestion) {
+      prompt += `USER QUESTION:\n${userQuery}\n\n`;
+      prompt += `HOW TO RESPOND:\n`;
+      prompt += `1. The user is asking about the owner/creator/author of this ${sourceType}, or wants to know who ${agentName} is.\n`;
+      prompt += `2. Use the identity and memory context above to describe who ${agentName} represents.\n`;
+      prompt += `3. Include their background, skills, projects, experience, and any other personal info from the content below.\n`;
+      prompt += `4. If asked "who is [name]" - describe the person whose ${sourceType} this is, using all available info.\n`;
+      prompt += `5. Be warm, informative, and helpful. Do not say "I don't have that info" if memory context or chunks contain relevant info.\n\n`;
+      if (context && !context.includes('No relevant information')) {
+        prompt += `RELEVANT CONTENT FROM ${agentName.toUpperCase()}:\n${context}\n\n`;
+      }
+    }
     // Handle generic requests (summarize, outline, overview) specially
-    if (isGenericRequest && hasRelevantContext) {
+    else if (isGenericRequest && hasRelevantContext) {
       prompt += `CONTENT FROM ${agentName.toUpperCase()}:\n`;
       prompt += `${context}\n\n`;
       prompt += `USER REQUEST:\n${userQuery}\n\n`;
