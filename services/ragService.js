@@ -71,6 +71,41 @@ class RAGService {
     return query;
   }
 
+  /**
+   * Detect if the query is a general knowledge question not related to the agent.
+   * These should bypass RAG and be answered directly by the LLM.
+   */
+  detectGeneralQuestion(query) {
+    const q = query.toLowerCase().trim();
+
+    // Very short greetings — handle inline, not general knowledge
+    if (/^(hi|hello|hey|howdy|sup|yo|greetings)[\s!?.,]*$/.test(q)) return false;
+
+    const generalPatterns = [
+      // World knowledge
+      /\bwho is (the )?(president|prime minister|pm|ceo|founder|king|queen|leader)\b/i,
+      /\bwhat is (the )?(capital|currency|population|flag|language) of\b/i,
+      /\bwhen (was|did|is|are)\b.{5,}\b(born|invented|founded|created|discovered|established|happen|start|end|won|lost)\b/i,
+      /\bhow (do|does|did|to|can|should|would|many|much|far|long|often)\b/i,
+      /\bwhy (do|does|did|is|are|was|were|can|should|would)\b/i,
+      /\bwhat (is|are|was|were) (a |an |the )?(difference|meaning|definition|example|type|kind|cause|effect|purpose|benefit|advantage|disadvantage)\b/i,
+      /\bexplain (me )?(what|how|why|when|where|the concept|the difference)\b/i,
+      /\b(define|definition of|meaning of)\b/i,
+      /\b(formula|equation|calculate|convert|unit|measure)\b/i,
+      /\b(world|global|international|country|countries|nation|history|science|math|physics|chemistry|biology|geography|economics|politics|sports|entertainment|movies|music|books|food|travel|health|medicine|technology|programming|coding|software|hardware|internet|AI|machine learning|deep learning)\b.{0,30}\?$/i,
+      /\bwhat (year|date|day|month|time) (is|was|did|does)\b/i,
+      /\btell me (a joke|a fun fact|about yourself|something interesting|an interesting fact)\b/i,
+      /\b(joke|riddle|fun fact|trivia)\b/i,
+      // Conversational
+      /\bhow are you\b/i,
+      /\bwhat can you do\b/i,
+      /\bwhat('s| is) your name\b/i,
+      /\bwho (are|made|created|built|trained) you\b/i,
+    ];
+
+    return generalPatterns.some(p => p.test(q));
+  }
+
   detectIdentityQuestion(query, agentName = '') {
     const lowerQuery = query.toLowerCase().trim();
 
@@ -125,6 +160,20 @@ class RAGService {
       const expandedQuery = this.expandQuery(contextualizedQuery);
       const isGenericRequest = expandedQuery !== contextualizedQuery;
       const isIdentityQuestion = this.detectIdentityQuestion(userQuery, agentName);
+      const isGeneralQuestion = this.detectGeneralQuestion(userQuery);
+
+      if (isGeneralQuestion) {
+        console.log(`[RAG] Detected general knowledge question — skipping vector search`);
+        return {
+          context: '',
+          chunks: [],
+          conversationHistory: [],
+          isGenericRequest: false,
+          isIdentityQuestion: false,
+          isGeneralQuestion: true,
+          metadata: { chunksRetrieved: 0, averageSimilarity: 0, contextLength: 0 },
+        };
+      }
 
       if (isGenericRequest) {
         console.log(`[RAG] Detected generic request, expanding query for better retrieval`);
@@ -173,6 +222,7 @@ class RAGService {
         conversationHistory,
         isGenericRequest,
         isIdentityQuestion,
+        isGeneralQuestion: false,
         metadata: {
           chunksRetrieved: similarChunks.length,
           averageSimilarity: this.calculateAverageSimilarity(similarChunks),
@@ -260,7 +310,7 @@ class RAGService {
    * @param {boolean} isGenericRequest - Whether this is a summary/outline request
    * @returns {string} Complete prompt
    */
-  buildPrompt(userQuery, context, conversationHistory = [], agentContext = {}, hasRelevantContext = true, isGenericRequest = false, isIdentityQuestion = false) {
+  buildPrompt(userQuery, context, conversationHistory = [], agentContext = {}, hasRelevantContext = true, isGenericRequest = false, isIdentityQuestion = false, isGeneralQuestion = false) {
     const agentName = agentContext.name || 'Assistant';
     const agentType = agentContext.type || 'knowledge base';
     const sourceUrl = agentContext.sourceUrl || '';
@@ -294,6 +344,22 @@ class RAGService {
         prompt += `${role}: ${msg.content}\n`;
       });
       prompt += `\n`;
+    }
+
+    // Handle general knowledge questions — answer freely without agent scope restriction
+    if (isGeneralQuestion) {
+      let prompt = `You are a helpful AI assistant embedded in "${agentName}". `;
+      prompt += `The user is asking a general knowledge question.\n\n`;
+      if (conversationHistory && conversationHistory.length > 0) {
+        prompt += `PREVIOUS CONVERSATION:\n`;
+        conversationHistory.forEach(msg => {
+          prompt += `${msg.role === 'user' ? 'User' : 'You'}: ${msg.content}\n`;
+        });
+        prompt += `\n`;
+      }
+      prompt += `USER QUESTION:\n${userQuery}\n\n`;
+      prompt += `Answer helpfully and concisely. If the question is conversational (e.g. "how are you"), respond naturally. If it's factual, give a clear and accurate answer.`;
+      return prompt;
     }
 
     // Handle identity/ownership questions — use memory context + any retrieved chunks

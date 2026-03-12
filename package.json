@@ -28,6 +28,7 @@
     "axios": "^1.10.0",
     "better-sqlite3": "^12.4.6",
     "body-parser": "^2.2.0",
+    "bullmq": "^5.71.0",
     "cheerio": "^1.1.0",
     "cheerio-select": "^2.1.0",
     "cloudflare": "^5.2.0",

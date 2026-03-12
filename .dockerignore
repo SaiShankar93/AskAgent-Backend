@@ -1,0 +1,8 @@
+node_modules
+.git
+.gitignore
+.env
+*.log
+uploads/*
+memory.db
+vector_store.db
