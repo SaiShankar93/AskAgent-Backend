@@ -18,16 +18,13 @@ services:
     env_file:
       - .env
     environment:
-      # Point services at the Docker network hostnames, not localhost
-      MONGODB_URI: mongodb://mongodb:27017/askagent
+      # Use MONGODB_URI from .env (MongoDB Atlas)
       REDIS_URL:   redis://redis:6379
       REDIS_HOST:  redis
       REDIS_PORT:  '6379'
       QDRANT_URL:  http://qdrant:6333
     depends_on:
       redis:
-        condition: service_healthy
-      mongodb:
         condition: service_healthy
       qdrant:
         condition: service_healthy
@@ -47,22 +44,6 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-
-  # ─── MongoDB 7 ────────────────────────────────────────────────────────────
-  mongodb:
-    image: mongo:7
-    container_name: askagent_mongo
-    restart: unless-stopped
-    ports:
-      - '27017:27017'
-    volumes:
-      - mongo_data:/data/db
-    healthcheck:
-      test: ['CMD', 'mongosh', '--eval', "db.adminCommand('ping')"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-
   # ─── Qdrant ───────────────────────────────────────────────────────────────
   qdrant:
     image: qdrant/qdrant:latest
@@ -82,5 +63,4 @@ services:
 volumes:
   server_node_modules:   # Linux-native node_modules for the server container
   redis_data:
-  mongo_data:
   qdrant_data:
