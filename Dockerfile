@@ -4,7 +4,7 @@ WORKDIR /app
 
 # Install dependencies during build for non-bind-mount workflows.
 COPY package*.json ./
-RUN npm install
+RUN npm ci --legacy-peer-deps
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
