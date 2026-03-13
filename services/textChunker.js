@@ -1,12 +1,43 @@
-const { RecursiveCharacterTextSplitter } = require("@langchain/textsplitters");
-
 class TextChunker {
   constructor(chunkSize = 1500, chunkOverlap = 200) {
-    this.splitter = new RecursiveCharacterTextSplitter({
-      chunkSize,
-      chunkOverlap,
-      separators: ['\n\n', '\n', '. ', '! ', '? ', ', ', ' ', ''],
-    });
+    this.chunkSize = chunkSize;
+    this.chunkOverlap = chunkOverlap;
+    this.separators = ['\n\n', '\n', '. ', '! ', '? ', ', ', ' '];
+  }
+
+  splitIntoChunks(text) {
+    const chunks = [];
+    let cursor = 0;
+
+    while (cursor < text.length) {
+      const maxEnd = Math.min(cursor + this.chunkSize, text.length);
+      let end = maxEnd;
+
+      if (maxEnd < text.length) {
+        const minBreak = Math.floor(cursor + this.chunkSize * 0.6);
+
+        for (const separator of this.separators) {
+          const idx = text.lastIndexOf(separator, maxEnd);
+          if (idx >= minBreak) {
+            end = idx + separator.length;
+            break;
+          }
+        }
+      }
+
+      const slice = text.slice(cursor, end).trim();
+      if (slice) {
+        chunks.push(slice);
+      }
+
+      if (end >= text.length) {
+        break;
+      }
+
+      cursor = Math.max(end - this.chunkOverlap, cursor + 1);
+    }
+
+    return chunks;
   }
 
   /**
@@ -21,16 +52,15 @@ class TextChunker {
         throw new Error('Text is empty or invalid');
       }
 
-      // Split the text into chunks
-      const chunks = await this.splitter.createDocuments([text]);
+      const chunks = this.splitIntoChunks(text);
 
       // Format chunks with metadata
-      return chunks.map((chunk, index) => ({
-        content: chunk.pageContent,
+      return chunks.map((chunkContent, index) => ({
+        content: chunkContent,
         metadata: {
           ...metadata,
           chunkIndex: index,
-          chunkLength: chunk.pageContent.length,
+          chunkLength: chunkContent.length,
           totalChunks: chunks.length,
         },
       }));
@@ -59,19 +89,18 @@ class TextChunker {
       for (const page of pages) {
         const pageText = this.formatPageContent(page);
         
-        // Chunk the page content
-        const pageChunks = await this.splitter.createDocuments([pageText]);
+        const pageChunks = this.splitIntoChunks(pageText);
 
         // Add chunks with page-specific metadata
-        pageChunks.forEach((chunk, index) => {
+        pageChunks.forEach((chunkContent, index) => {
           allChunks.push({
-            content: chunk.pageContent,
+            content: chunkContent,
             metadata: {
               sourceUrl: page.url,
               pageTitle: page.title,
               pageType: page.pageType || 'unknown',
               chunkIndex: index,
-              chunkLength: chunk.pageContent.length,
+              chunkLength: chunkContent.length,
               totalPageChunks: pageChunks.length,
               scrapedAt: metadata.scrapedAt || new Date().toISOString(),
             },

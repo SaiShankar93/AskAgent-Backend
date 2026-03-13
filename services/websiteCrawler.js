@@ -1,4 +1,4 @@
-const { PuppeteerWebBaseLoader } = require('@langchain/community/document_loaders/web/puppeteer');
+const puppeteer = require('puppeteer');
 const { URL } = require('url');
 
 class WebsiteCrawler {
@@ -62,80 +62,68 @@ class WebsiteCrawler {
    */
   async scrapePage(url) {
     try {
-      const loader = new PuppeteerWebBaseLoader(url, {
-        launchOptions: {
-          headless: true,
-          args: ['--no-sandbox', '--disable-setuid-sandbox'],
-        },
-        gotoOptions: {
+      const browser = await puppeteer.launch({
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      });
+
+      let parsed = null;
+      try {
+        const page = await browser.newPage();
+        await page.goto(url, {
           waitUntil: 'domcontentloaded',
           timeout: 30000,
-        },
-        evaluate: async (page, browser) => {
-          // Wait for page to load
-          await page.waitForSelector('body', { timeout: 10000 }).catch(() => {});
-          
-          // Extract metadata
-          const title = await page.title();
-          const metaDescription = await page.$eval('meta[name="description"]', el => el.content).catch(() => '');
-          
-          // Try to get favicon
-          let favicon = null;
-          try {
-            favicon = await page.$eval('link[rel="icon"]', el => el.href);
-          } catch (e) {
-            try {
-              favicon = await page.$eval('link[rel="shortcut icon"]', el => el.href);
-            } catch (e2) {
-              // Try to construct default favicon URL
-              const currentUrl = page.url();
-              const urlObj = new URL(currentUrl);
-              favicon = `${urlObj.protocol}//${urlObj.hostname}/favicon.ico`;
-            }
+        });
+        await page.waitForSelector('body', { timeout: 10000 }).catch(() => {});
+
+        parsed = await page.evaluate(() => {
+          const title = document.title || '';
+
+          const metaDescription = document.querySelector('meta[name="description"]')?.content || '';
+
+          let favicon = document.querySelector('link[rel="icon"]')?.href || document.querySelector('link[rel="shortcut icon"]')?.href || null;
+          if (!favicon) {
+            favicon = `${location.protocol}//${location.hostname}/favicon.ico`;
           }
-          
-          // Get the main content (remove script and style tags)
-          const content = await page.evaluate(() => {
-            // Remove unwanted elements
-            const elementsToRemove = document.querySelectorAll('script, style, nav, header, footer, iframe, noscript');
-            elementsToRemove.forEach(el => el.remove());
-            
-            // Get clean text content
-            return document.body.innerText;
-          });
-          
-          // Get all links on the page
-          const links = await page.evaluate(() => {
-            const anchors = Array.from(document.querySelectorAll('a[href]'));
-            return anchors.map(a => a.href).filter(href => href && !href.startsWith('#'));
-          });
-          
-          // Get headings
-          const headings = await page.evaluate(() => {
-            const headingElements = Array.from(document.querySelectorAll('h1, h2, h3'));
-            return headingElements.map(h => h.innerText.trim()).filter(text => text.length > 0);
-          });
-          
-          return JSON.stringify({
+
+          const clonedBody = document.body.cloneNode(true);
+          const elementsToRemove = clonedBody.querySelectorAll('script, style, nav, header, footer, iframe, noscript');
+          elementsToRemove.forEach(el => el.remove());
+          const content = clonedBody.innerText || '';
+
+          const links = Array.from(document.querySelectorAll('a[href]'))
+            .map(a => a.getAttribute('href'))
+            .filter(Boolean)
+            .map(href => {
+              try {
+                return new URL(href, location.href).href;
+              } catch (e) {
+                return null;
+              }
+            })
+            .filter(Boolean);
+
+          const headings = Array.from(document.querySelectorAll('h1, h2, h3'))
+            .map(h => (h.textContent || '').trim())
+            .filter(text => text.length > 0);
+
+          return {
             content,
             title,
             metaDescription,
             favicon,
             links,
             headings,
-            url: page.url(),
-          });
-        },
-      });
-      
-      const docs = await loader.load();
-      
-      if (docs.length === 0) {
+            url: location.href,
+          };
+        });
+      } finally {
+        await browser.close();
+      }
+
+      if (!parsed || !parsed.content) {
         return null;
       }
-      
-      // Parse the scraped data
-      const parsed = JSON.parse(docs[0].pageContent);
       
       return {
         url: parsed.url,
