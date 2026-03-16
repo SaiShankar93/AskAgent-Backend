@@ -4,13 +4,20 @@ const ragService  = require('../services/ragService');
 const llmService  = require('../services/llmService');
 const vectorStore = require('../services/vectorStore');
 const memoryService = require('../services/memoryService');
-const { enqueueChatJob } = require('../redis_services/chatQueue');
-const { checkRateLimit }  = require('../redis_services/rateLimiter');
-const { isConnected }     = require('../redis_services/redisClient');
+const { enqueueChatJob }                    = require('../redis_services/chatQueue');
+const { checkRateLimit }                    = require('../redis_services/rateLimiter');
+const { isConnected }                       = require('../redis_services/redisClient');
+const { checkTokenBudget, recordTokenUsage } = require('../redis_services/tokenLimiter');
 
-// ─── Rate-limit config ────────────────────────────────────────────────────
+// ─── Request rate-limit config ────────────────────────────────────────────
 const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS || 60_000);
 const RATE_LIMIT_MAX       = Number(process.env.RATE_LIMIT_MAX       || 30);
+
+// ─── Daily token budget config ────────────────────────────────────────────
+// Authenticated users: 100 000 tokens/day  (~$0.015 with gpt-4o-mini)
+// Widget (IP-based):    20 000 tokens/day  (more conservative — public endpoint)
+const TOKEN_LIMIT_USER   = Number(process.env.TOKEN_LIMIT_USER_DAILY   || 100_000);
+const TOKEN_LIMIT_WIDGET = Number(process.env.TOKEN_LIMIT_WIDGET_DAILY || 20_000);
 
 // ─── GET /api/chat/:agentId/history ──────────────────────────────────────
 async function getHistory(req, res) {
@@ -216,7 +223,7 @@ async function sendMessage(req, res) {
         if (!agent) return res.status(404).json({ success: false, error: 'Agent not found' });
         if (agent.user_id !== userId) return res.status(403).json({ success: false, error: 'Access denied' });
 
-        // ── Per-user rate limit ────────────────────────────────────────────
+        // ── Per-user request rate limit ────────────────────────────────────
         const rl = await checkRateLimit(`chat:${userId}`, {
             windowMs: RATE_LIMIT_WINDOW_MS,
             max:      RATE_LIMIT_MAX,
@@ -234,6 +241,28 @@ async function sendMessage(req, res) {
             });
         }
 
+        // ── Daily token budget check ───────────────────────────────────────
+        const tokenKey    = `user:${userId}`;
+        const tokenBudget = await checkTokenBudget(tokenKey, TOKEN_LIMIT_USER);
+
+        res.setHeader('X-Token-Limit',          TOKEN_LIMIT_USER);
+        res.setHeader('X-Token-Used',           tokenBudget.used);
+        res.setHeader('X-Token-Remaining',      tokenBudget.remaining);
+        res.setHeader('X-Token-Reset-Seconds',  tokenBudget.resetInSeconds);
+
+        if (!tokenBudget.allowed) {
+            console.log(`[Chat] Token limit reached for user ${userId} (used: ${tokenBudget.used}/${TOKEN_LIMIT_USER})`);
+            return res.status(429).json({
+                success:      false,
+                error:        'Daily token limit reached. Please try again after some time.',
+                tokenLimitReached: true,
+                used:         tokenBudget.used,
+                limit:        TOKEN_LIMIT_USER,
+                resetInSeconds: tokenBudget.resetInSeconds,
+                resetAtMs:    tokenBudget.resetAtMs,
+            });
+        }
+
         // ── Route through Redis queue or run inline ────────────────────────
         let result;
         if (isConnected()) {
@@ -241,6 +270,13 @@ async function sendMessage(req, res) {
         } else {
             console.warn('[Chat] Redis unavailable — running pipeline inline');
             result = await runChatPipeline({ agentId, userId, content, isWidget: false });
+        }
+
+        // ── Record token usage for budget tracking (fire-and-forget) ──────
+        const tokensUsed = result?.metadata?.tokensUsed || 0;
+        if (tokensUsed > 0) {
+            recordTokenUsage(tokenKey, tokensUsed).catch(() => {});
+            console.log(`[Chat] Recorded ${tokensUsed} tokens for user ${userId} (total today: ~${tokenBudget.used + tokensUsed})`);
         }
 
         return res.json({ success: true, data: result });
@@ -276,8 +312,11 @@ async function widgetMessage(req, res) {
         const agent = await Agent.findById(agentId);
         if (!agent) return res.status(404).json({ success: false, error: 'Agent not found' });
 
-        // ── Per-agent widget rate limit (IP-based, more lenient) ───────────
-        const ip = req.ip || req.headers['x-forwarded-for'] || 'unknown';
+        // ── IP extraction ──────────────────────────────────────────────────
+        const ip = (req.headers['x-forwarded-for'] || req.ip || 'unknown')
+            .split(',')[0].trim(); // handle comma-separated proxy chains
+
+        // ── Per-IP request rate limit ──────────────────────────────────────
         const rl = await checkRateLimit(`widget:${agentId}:${ip}`, {
             windowMs: 60_000,
             max:      20,
@@ -291,12 +330,32 @@ async function widgetMessage(req, res) {
             });
         }
 
+        // ── Daily token budget (IP-based) ─────────────────────────────────
+        const tokenKey    = `ip:${ip}`;
+        const tokenBudget = await checkTokenBudget(tokenKey, TOKEN_LIMIT_WIDGET);
+
+        if (!tokenBudget.allowed) {
+            console.log(`[Widget] Token limit reached for IP ${ip} (used: ${tokenBudget.used}/${TOKEN_LIMIT_WIDGET})`);
+            return res.status(429).json({
+                success:      false,
+                error:        'Daily token limit reached. Please try again after some time.',
+                tokenLimitReached: true,
+                resetInSeconds: tokenBudget.resetInSeconds,
+            });
+        }
+
         // ── Route through Redis queue or run inline ────────────────────────
         let result;
         if (isConnected()) {
             result = await enqueueChatJob({ agentId, userId: `widget_${agentId}`, content, isWidget: true });
         } else {
             result = await runChatPipeline({ agentId, userId: `widget_${agentId}`, content, isWidget: true });
+        }
+
+        // ── Record token usage (fire-and-forget) ──────────────────────────
+        const tokensUsed = result?.metadata?.tokensUsed || 0;
+        if (tokensUsed > 0) {
+            recordTokenUsage(tokenKey, tokensUsed).catch(() => {});
         }
 
         return res.json({
