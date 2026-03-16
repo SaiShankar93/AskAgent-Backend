@@ -1,6 +1,28 @@
 const puppeteer = require('puppeteer');
 const { URL } = require('url');
 
+// ─── Puppeteer launch config ─────────────────────────────────────────────────────
+// On Linux servers (VPS / Docker) Chrome needs these flags to run without
+// a display and without root. Set PUPPETEER_EXECUTABLE_PATH to point to
+// your system Chromium (e.g. /usr/bin/chromium-browser) if you don't want
+// Puppeteer's bundled Chrome. Run `npx puppeteer browsers install chrome`
+// the first time if using the bundled version.
+const PUPPETEER_LAUNCH_OPTIONS = {
+  headless:  'new',     // new headless mode (stable in Puppeteer v21+)
+  executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
+  args: [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage',   // prevents /dev/shm OOM crashes in Docker/VPS
+    '--disable-gpu',
+    '--disable-software-rasterizer',
+    '--no-first-run',
+    '--no-zygote',
+    '--single-process',          // avoids forking issues in constrained envs
+    '--disable-extensions',
+  ],
+};
+
 class WebsiteCrawler {
   constructor(baseUrl, maxPages = 10) {
     this.baseUrl = baseUrl;
@@ -62,10 +84,7 @@ class WebsiteCrawler {
    */
   async scrapePage(url) {
     try {
-      const browser = await puppeteer.launch({
-        headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox'],
-      });
+      const browser = await puppeteer.launch(PUPPETEER_LAUNCH_OPTIONS);
 
       let parsed = null;
       try {
