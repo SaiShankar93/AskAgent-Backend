@@ -1,10 +1,11 @@
-// ⚠️ dotenv MUST be first — services like embeddingService and llmService
-// instantiate OpenAI clients at require-time and need env vars to be set.
+// ⚠️ dotenv MUST be first — services read process.env at require-time.
 require('dotenv').config();
 
+const http    = require('http');
 const express = require('express');
 const cors    = require('cors');
 const connectToDatabase  = require('./config/mongo');
+const socketService      = require('./services/socketService');
 const { getRedisClient } = require('./redis_services/redisClient');
 const { initChatQueue,  shutdownChatQueue  } = require('./redis_services/chatQueue');
 const { initAgentQueue, shutdownAgentQueue } = require('./redis_services/agentQueue');
@@ -12,58 +13,54 @@ const { initAgentQueue, shutdownAgentQueue } = require('./redis_services/agentQu
 const agentRoutes = require('./routes/agentRoutes');
 const chatRoutes  = require('./routes/chatRoutes');
 
-const app = express();
+const app    = express();
+const server = http.createServer(app);   // raw http.Server so socket.io can attach
 
-app.use(cors({ origin: '*', credentials: true }));
+app.use(cors({ origin: process.env.FRONTEND_URL || '*', credentials: true }));
 app.use(express.json());
 
-// ─── Routes ────────────────────────────────────────────────────────────────
 app.use('/api/agents', agentRoutes);
-app.use('/api/chat', chatRoutes);
+app.use('/api/chat',   chatRoutes);
 
 const PORT = process.env.PORT || 5000;
 
 (async () => {
     try {
-        // 1. Connect to MongoDB
+        // 1. MongoDB
         await connectToDatabase();
         console.log('[Boot] MongoDB connected ✓');
 
-        // 2. Connect to Redis and start BullMQ workers
+        // 2. Socket.io  (must come before listening so clients can connect)
+        socketService.init(server);
+
+        // 3. Redis + BullMQ workers
         try {
-            await getRedisClient(); // warns gracefully if Redis is down
-
-            initChatQueue();   // chat messages (send + widget)
-            initAgentQueue();  // agent ingestion (crawl / embed / store)
-
+            await getRedisClient();
+            initChatQueue();
+            initAgentQueue();
             console.log('[Boot] Redis queues initialised ✓');
         } catch (redisErr) {
-            console.warn('[Boot] Redis unavailable — all operations will run inline (no queue):', redisErr.message);
+            console.warn('[Boot] Redis unavailable — running inline (no queue):', redisErr.message);
         }
 
-        // 3. Start HTTP server
-        const server = app.listen(PORT, () => {
+        // 4. Start listening
+        server.listen(PORT, () => {
             console.log(`[Boot] AskAgent server running on port ${PORT} ✓`);
         });
 
-        // 4. Graceful shutdown on SIGTERM / SIGINT (e.g. Docker stop, Ctrl-C)
+        // 5. Graceful shutdown
         const gracefulShutdown = async (signal) => {
-            console.log(`\n[Shutdown] ${signal} received — shutting down gracefully...`);
+            console.log(`\n[Shutdown] ${signal} received...`);
             server.close(async () => {
                 await Promise.allSettled([shutdownChatQueue(), shutdownAgentQueue()]);
-                console.log('[Shutdown] All queues drained. Bye!');
+                console.log('[Shutdown] Done');
                 process.exit(0);
             });
-
-            // Force-exit after 15 s if something is stuck
-            setTimeout(() => {
-                console.error('[Shutdown] Forced exit after timeout');
-                process.exit(1);
-            }, 15_000);
+            setTimeout(() => { console.error('[Shutdown] Forced exit'); process.exit(1); }, 15_000);
         };
 
         process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-        process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+        process.on('SIGINT',  () => gracefulShutdown('SIGINT'));
 
     } catch (err) {
         console.error('[Boot] Fatal startup error:', err);

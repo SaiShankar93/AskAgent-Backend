@@ -4,6 +4,7 @@ const AgentSchema = new mongoose.Schema({
     userId: { type: String, required: true, index: true },
     name: { type: String, required: true },
     type: { type: String, enum: ['website', 'document'], required: true },
+    status: { type: String, enum: ['pending', 'processing', 'ready', 'failed'], default: 'pending' },
     description: { type: String },
     logoUrl: { type: String },
     sourceUrl: { type: String },
@@ -79,6 +80,7 @@ class Agent {
             const updatePayload = {};
             if (updates.name !== undefined) updatePayload.name = updates.name;
             if (updates.type !== undefined) updatePayload.type = updates.type;
+            if (updates.status !== undefined) updatePayload.status = updates.status;
             if (updates.description !== undefined) updatePayload.description = updates.description;
             if (updates.logo_url !== undefined) updatePayload.logoUrl = updates.logo_url;
             if (updates.source_url !== undefined) updatePayload.sourceUrl = updates.source_url;
@@ -128,6 +130,7 @@ class Agent {
             user_id: doc.userId,
             name: doc.name,
             type: doc.type,
+            status: doc.status || 'ready',
             description: doc.description,
             logo_url: doc.logoUrl,
             source_url: doc.sourceUrl,
