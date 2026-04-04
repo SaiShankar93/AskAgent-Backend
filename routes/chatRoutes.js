@@ -12,6 +12,10 @@ router.post('/send', requireAuth, chatController.sendMessage);
 // Widget endpoint (no auth required for public embedding)
 router.post('/widget', chatController.widgetMessage);
 
+// TTS — convert text to speech (audio/mpeg stream)
+router.post('/tts',        requireAuth,              chatController.ttsSpeak);
+router.post('/widget-tts',                           chatController.widgetTtsSpeak);
+
 // Get RAG context for a query (for debugging/testing)
 router.post('/context', requireAuth, chatController.getContext);
 

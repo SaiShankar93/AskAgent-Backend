@@ -1,6 +1,13 @@
 // ⚠️ dotenv MUST be first — services read process.env at require-time.
 require('dotenv').config();
 
+// mem0ai/oss reports to PostHog unless MEM0_TELEMETRY is the string "false". On many VPS
+// setups outbound HTTPS to PostHog times out (ETIMEDOUT) and logs "Telemetry event capture failed".
+// Default off; set MEM0_TELEMETRY=true to opt in. Must run before any require('mem0ai/...').
+if (process.env.MEM0_TELEMETRY == null || process.env.MEM0_TELEMETRY === '') {
+    process.env.MEM0_TELEMETRY = 'false';
+}
+
 const http    = require('http');
 const express = require('express');
 const cors    = require('cors');

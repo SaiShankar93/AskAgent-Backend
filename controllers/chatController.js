@@ -4,6 +4,12 @@ const ragService  = require('../services/ragService');
 const llmService  = require('../services/llmService');
 const vectorStore = require('../services/vectorStore');
 const memoryService = require('../services/memoryService');
+const OpenAI         = require('openai');
+const { pipeline }   = require('stream/promises');
+
+// ─── TTS helpers ──────────────────────────────────────────────────────────
+const _ttsClient    = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const VALID_VOICES  = new Set(['alloy', 'echo', 'fable', 'onyx', 'nova', 'shimmer']);
 const { enqueueChatJob }                    = require('../redis_services/chatQueue');
 const { checkRateLimit }                    = require('../redis_services/rateLimiter');
 const { isConnected }                       = require('../redis_services/redisClient');
@@ -404,6 +410,58 @@ async function testLLM(req, res) {
     }
 }
 
+// ─── POST /api/chat/tts (authenticated) ──────────────────────────────────
+async function ttsSpeak(req, res) {
+    try {
+        const { text, voice = 'nova' } = req.body;
+        if (!text?.trim()) return res.status(400).json({ success: false, error: 'text is required' });
+
+        const safeVoice = VALID_VOICES.has(voice) ? voice : 'nova';
+        console.log(`[TTS] voice=${safeVoice} chars=${text.length}`);
+
+        const mp3 = await _ttsClient.audio.speech.create({
+            model: 'tts-1',
+            voice: safeVoice,
+            input: text.trim().slice(0, 4096),
+        });
+
+        res.setHeader('Content-Type', 'audio/mpeg');
+        res.setHeader('Cache-Control', 'no-store');
+        // mp3.body is a Node.js PassThrough stream in the openai SDK v4 — pipe directly
+        await pipeline(mp3.body, res);
+    } catch (error) {
+        console.error('[TTS] Error:', error);
+        if (!res.headersSent) res.status(500).json({ success: false, error: 'TTS failed' });
+    }
+}
+
+// ─── POST /api/chat/widget-tts (public — for embedded widget) ────────────
+async function widgetTtsSpeak(req, res) {
+    try {
+        const { text, voice = 'nova' } = req.body;
+        if (!text?.trim()) return res.status(400).json({ success: false, error: 'text is required' });
+
+        const ip = (req.headers['x-forwarded-for'] || req.ip || 'unknown').split(',')[0].trim();
+        const rl = await checkRateLimit(`widget-tts:${ip}`, { windowMs: 60_000, max: 30 });
+        if (!rl.allowed) return res.status(429).json({ success: false, error: 'Too many requests' });
+
+        const safeVoice = VALID_VOICES.has(voice) ? voice : 'nova';
+
+        const mp3 = await _ttsClient.audio.speech.create({
+            model: 'tts-1',
+            voice: safeVoice,
+            input: text.trim().slice(0, 4096),
+        });
+
+        res.setHeader('Content-Type', 'audio/mpeg');
+        res.setHeader('Cache-Control', 'no-store');
+        await pipeline(mp3.body, res);
+    } catch (error) {
+        console.error('[TTS Widget] Error:', error);
+        if (!res.headersSent) res.status(500).json({ success: false, error: 'TTS failed' });
+    }
+}
+
 // ─── GET /api/chat/queue-stats ────────────────────────────────────────────
 async function queueStats(req, res) {
     try {
@@ -417,5 +475,6 @@ async function queueStats(req, res) {
 
 module.exports = {
     getHistory, sendMessage, getContext, testLLM, widgetMessage, queueStats,
+    ttsSpeak, widgetTtsSpeak,
     runChatPipeline, // exported so the queue worker can import it
 };
