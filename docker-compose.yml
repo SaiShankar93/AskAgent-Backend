@@ -6,7 +6,7 @@ services:
     restart: unless-stopped
     ports:
       - '127.0.0.1:6379:6379'
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    command: redis-server --appendonly no --maxmemory 256mb --maxmemory-policy allkeys-lru
     volumes:
       - redis_data:/data
     healthcheck:
