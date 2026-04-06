@@ -110,7 +110,7 @@ async function runWebsitePipeline(payload, onProgress) {
         await Agent.update(agentId, { status: 'processing' });
 
         console.log(`[WebsitePipeline] Crawling: ${url}`);
-        const maxPages = 50;
+        const maxPages = 10;
         const crawler  = new WebsiteCrawler(url, maxPages);
 
         // Hook into the crawler to get per-page events
